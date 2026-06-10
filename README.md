@@ -1,8 +1,8 @@
-# CarSim 2019.0 + Python 最小纵向控制 Demo
+# CarSim 2019.0 + Python 纵向速度跟踪控制 Demo
 
 这份文档面向刚开始接触 CarSim 与 Python 联合仿真的读者。目标很简单：
 
-**让 Python 在 CarSim 仿真过程中读取车速，并只把两个控制量传回 CarSim：`throttle` 和 `brake`。**
+**让 Python 在 CarSim 仿真过程中读取当前车速，通过PID控制调节 `throttle` 和 `brake` 两个控制量传回 CarSim，使车辆能够跟踪目标速度。**
 
 ## 1. 交互逻辑
 
@@ -27,7 +27,7 @@ export_vars: CarSim -> Python
 import_vars: Python -> CarSim
 ```
 
-在本文的最小 Demo 中：
+在本文的 Demo 中：
 
 ```text
 import_vars = [throttle, brake]
@@ -91,8 +91,6 @@ PORTS_IMP 1,2
 第 2 个 import = brake
 ```
 
-如果你的 `simfile.sim` 显示 `PORTS_IMP 1,4` 或 `PORTS_IMP 1,6`，这个最小 Demo 会报错，因为它只支持 2 个输入。
-
 ### 要求 2：CarSim 至少输出 Vx
 
 Demo 里的 PID 控制器需要读取当前纵向车速，所以 CarSim 至少需要 export：
@@ -121,12 +119,6 @@ PORTS_EXP 1,6
 --export-names Vx
 ```
 
-如果你输出 6 个变量，就写：
-
-```text
---export-names Vx,Ax,Xo,DisS1_1,SpdS1_1,V_Obj_1
-```
-
 **注意：`--export-names` 的顺序必须和 CarSim 中 EXPORT 的顺序完全一致。**
 
 ## 4. simfile.sim 中应看到的关键信息
@@ -152,49 +144,19 @@ PORTS_EXP 1,N
 
 ## 5. Python 文件怎么运行
 
-假设你已经把这 4 个 `.py` 文件放在同一个目录下，例如：
+假设你已经把这 4 个 `.py` 文件放在同一个目录下，并且你已经创建好了simfile.sim：
 
 ```text
-C:\Users\Administrator
+D:\xxx\simfile.sim
 ```
 
-并且你已经创建好了：
-
-```text
-D:\CarSim2019.0\CarSim2019.0_Data\Extensions\CarSimPython\MyLongitudinalDemo\simfile.sim
-```
-
-### 第一步：确认 Python 能看到脚本
-
-在 PowerShell 中进入脚本目录：
-
-```powershell
-cd C:\Users\Administrator
-```
-
-查看帮助：
-
-```powershell
-python .\example_longitudinal_pid.py --help
-```
-
-如果能看到参数说明，说明 Python 脚本本身可以运行。
-
-### 第二步：运行只输出 Vx 的最小 Demo
-
-如果你的 CarSim run 只配置了：
-
-```text
-EXPORT Vx
-PORTS_EXP 1,1
-```
+### 运行 Demo
 
 运行：
 
 ```powershell
 python .\example_longitudinal_pid.py `
-  --sim-file "D:\CarSim2019.0\CarSim2019.0_Data\Extensions\CarSimPython\MyLongitudinalDemo\simfile.sim" `
-  --export-names Vx `
+  --sim-file ".\simfile.sim" `
   --target-speed 25 `
   --duration 10 `
   --log-csv ".\longitudinal_pid_log.csv"
@@ -203,54 +165,9 @@ python .\example_longitudinal_pid.py `
 含义：
 
 - `--sim-file`：你的 CarSim simfile 路径；
-- `--export-names Vx`：告诉 Python，CarSim 只输出了一个变量，名字是 `Vx`；
 - `--target-speed 25`：目标速度为 `25 m/s`；
 - `--duration 10`：运行 10 秒；
 - `--log-csv`：保存日志。
-
-### 第三步：运行多输出变量 Demo
-
-如果你的 CarSim run 配置了：
-
-```text
-EXPORT Vx
-EXPORT Ax
-EXPORT Xo
-EXPORT DisS1_1
-EXPORT SpdS1_1
-EXPORT V_Obj_1
-PORTS_EXP 1,6
-```
-
-运行：
-
-```powershell
-python .\example_longitudinal_pid.py `
-  --sim-file "D:\CarSim2019.0\CarSim2019.0_Data\Extensions\CarSimPython\MyLongitudinalDemo\simfile.sim" `
-  --export-names Vx,Ax,Xo,DisS1_1,SpdS1_1,V_Obj_1 `
-  --target-speed 25 `
-  --duration 10 `
-  --log-csv ".\longitudinal_pid_log.csv"
-```
-
-运行结束后，会生成：
-
-```text
-longitudinal_pid_log.csv
-```
-
-里面记录每个控制周期的：
-
-```text
-time
-vx
-target_speed
-speed_error
-throttle
-brake
-rel_x
-return_code
-```
 
 ## 6. Demo 内部发生了什么
 
