@@ -1,6 +1,6 @@
 # CarSim 2019.0 + Python 纵向速度跟踪控制 Demo
 
-这份文档面向刚开始接触 CarSim 与 Python 联合仿真的读者。目标很简单：
+这份文档面向刚开始接触 CarSim 与 Python 联合仿真的读者（CarSim版本为CarSim 2019.0）。目标很简单：
 
 **让 Python 在 CarSim 仿真过程中读取当前车速，通过PID控制调节 `throttle` 和 `brake` 两个控制量传回 CarSim，使车辆能够跟踪目标速度。**
 
