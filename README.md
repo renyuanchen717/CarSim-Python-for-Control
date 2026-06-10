@@ -374,12 +374,3 @@ CarSim import 顺序必须和 Python import_vars 顺序一致。
 ```text
 [throttle, brake]
 ```
-
-## 10. 核心结论
-
-- 最小 CarSim-Python 纵向控制只需要两个输入：`throttle` 和 `brake`。
-- CarSim 侧必须配置 `PORTS_IMP 1,2`。
-- CarSim 至少需要输出 `Vx`，这样 Python 才能做速度控制。
-- `--export-names` 必须和 CarSim 的 `EXPORT` 顺序完全一致。
-- `example_longitudinal_pid.py` 是第一个应该运行的 Demo。
-- 每次仿真结束都必须调用 `terminate_run()`，代码中的 `env.close()` 已经处理这件事。
