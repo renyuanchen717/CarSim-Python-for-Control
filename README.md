@@ -4,7 +4,7 @@
 
 **让 Python 在 CarSim 仿真过程中读取车速，并只把两个控制量传回 CarSim：`throttle` 和 `brake`。**
 
-## 1. 最小交互逻辑
+## 1. 交互逻辑
 
 CarSim 和 Python 的交互可以理解成一个循环：
 
@@ -33,11 +33,9 @@ import_vars: Python -> CarSim
 import_vars = [throttle, brake]
 ```
 
-不再有转向输入，也不再补 `steer = 0`。这意味着你的 CarSim run 必须配置成只接收两个 import。
+## 2. 本仓库的 Python 文件
 
-## 2. 本仓库需要放哪些 Python 文件
-
-最小版本只需要 4 个文件：
+4 个文件：
 
 ```text
 carsim_vs_solver.py
@@ -55,7 +53,7 @@ example_longitudinal_pid.py
 | `carsim_longitudinal_env.py` | 把 CarSim 包装成只接收 `throttle/brake` 的环境。它会检查 CarSim import 数量必须为 2。 |
 | `example_longitudinal_pid.py` | 一个最小可运行 Demo：读取当前速度，用简单 PID 输出 `throttle/brake`，让车辆跟踪目标速度。 |
 
-建议先不要加入复杂模型。先用 `example_longitudinal_pid.py` 确认 CarSim 和 Python 的数据交换是通的。
+用 `example_longitudinal_pid.py` 确认 CarSim 和 Python 的数据交换是通的。
 
 ## 3. CarSim 侧需要创建什么 simfile
 
@@ -97,7 +95,7 @@ PORTS_IMP 1,2
 
 ### 要求 2：CarSim 至少输出 Vx
 
-Demo 里的 PID 控制器需要读取当前车速，所以 CarSim 至少需要 export：
+Demo 里的 PID 控制器需要读取当前纵向车速，所以 CarSim 至少需要 export：
 
 ```text
 EXPORT Vx
@@ -115,7 +113,7 @@ EXPORT V_Obj_1
 PORTS_EXP 1,6
 ```
 
-这些变量不是全部必需的。最小 Demo 真正需要的是 `Vx`。
+这些变量不是全部必需的。本 Demo 需要的是纵向车速 `Vx`。
 
 如果你只输出 `Vx`，运行命令里就写：
 
@@ -439,7 +437,7 @@ env.close()
 
 ## 9. 后续可以怎么扩展
 
-跑通最小 Demo 后，可以逐步扩展：
+跑通 Demo 后，可以逐步扩展：
 
 1. 增加更多 export，例如前车距离、前车速度、加速度；
 2. 把 PID 换成你自己的控制策略；
