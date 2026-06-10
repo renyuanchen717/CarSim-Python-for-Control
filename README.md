@@ -1,397 +1,472 @@
-# CarSim-Python-for-Control
+# CarSim 2019.0 + Python 最小纵向控制 Demo
 
-这份文档写给刚开始接触 CarSim 与 Python 联合仿真的读者。你不需要一开始就理解 CarSim 的所有配置，也不需要先会搭建复杂的神经网络。本文只关注一个问题：
+这份文档面向刚开始接触 CarSim 与 Python 联合仿真的读者。目标很简单：
 
-**如何让 Python 在 CarSim 仿真过程中读取车辆状态，并把油门、制动控制量传回 CarSim。**
+**让 Python 在 CarSim 仿真过程中读取车速，并只把两个控制量传回 CarSim：`throttle` 和 `brake`。**
 
-在这个基础上，我们再说明如何把 Python 中的 MoE 模型放在“功能选择器”的位置，让它根据车辆和环境状态选择调用 ACC、AEB 等 ADAS 功能。
+本文不讨论 MoE、ADAS、强化学习或复杂模型，只把最小交互规则讲清楚。
 
-## 1. 先建立直觉
+## 1. 最小交互逻辑
 
-CarSim 可以理解为一个车辆仿真器。它负责计算车辆动力学，比如车辆速度、位置、横摆角、障碍物相对位置等。
-
-Python 可以理解为外部控制器。它负责根据 CarSim 返回的状态做判断，然后输出控制量。
-
-整个过程像这样循环：
+CarSim 和 Python 的交互可以理解成一个循环：
 
 ```text
-CarSim 当前状态
+CarSim 输出车辆状态
     ↓
-Python 读取状态
+Python 读取状态，例如 Vx
     ↓
-Python 决定油门和刹车
+Python 计算 throttle / brake
     ↓
-CarSim 接收控制量并前进一步
+CarSim 接收 throttle / brake
     ↓
-CarSim 返回新的状态
+CarSim 前进一步并输出新状态
 ```
 
-这就是 CarSim 与 Python 联合仿真的核心。
-
-## 2. 本文使用的简化场景
-
-为了让流程更容易理解，本文只讨论纵向控制 (不涉及左右转向)。
-
-Python 输出两个量：
-
-```text
-throttle  油门
-brake     制动
-```
-
-本文的重点是：
-
-- 如何读取车速；
-- 如何读取前方目标车或障碍物位置；
-- 如何判断该加速、跟车还是制动；
-- 如何把 `throttle` 和 `brake` 传给 CarSim。
-
-## 3. CarSim 和 Python 怎么交换数据
-
-CarSim 和 Python 之间不是通过图片、传感器流或者网络消息交互，而是通过两个数组交换数据。
-
-一个数组叫 `export_vars`，表示 CarSim 输出给 Python 的状态。
-
-一个数组叫 `import_vars`，表示 Python 输入给 CarSim 的控制量。
-
-可以这样理解：
+这里有两个数组最重要：
 
 ```text
 export_vars: CarSim -> Python
 import_vars: Python -> CarSim
 ```
 
-每一个仿真步，Python 做的事情就是：
-
-```python
-return_code, export_vars = solver.integrate_io(
-    t_current,
-    import_vars,
-    export_vars,
-)
-```
-
-这行代码的意思是：
-
-1. 把当前的 `import_vars` 交给 CarSim；
-2. 让 CarSim 前进一步；
-3. 从 CarSim 取回新的 `export_vars`。
-
-## 4. Python 给 CarSim 的输入
-
-在纵向控制示例中，CarSim 接收 4 个输入：
+在本文的最小 Demo 中：
 
 ```text
-import_vars = [
-    throttle,
-    brake
-]
+import_vars = [throttle, brake]
 ```
 
-含义如下：
+不再有转向输入，也不再补 `steer = 0`。这意味着你的 CarSim run 必须配置成只接收两个 import。
 
-| 名称 | 含义 | 本文怎么使用 |
-| --- | --- | --- |
-| `throttle` | 油门开度 | Python 输出 |
-| `brake` | 制动输入 | Python 输出 |
+## 2. 本仓库需要放哪些 Python 文件
 
-因此，对本文的纵向控制任务来说，真正需要模型或控制器决定的只有：
-
-```python
-throttle = 0.2
-brake = 0.0
-```
-
-## 5. CarSim 返回给 Python 的状态
-
-CarSim 会返回车辆和目标物体的状态。常见输出如下：
+最小版本只需要 4 个文件：
 
 ```text
-export_vars = [
-    Vx,
-    Vy,
-    Yaw,
-    MuX_L1,
-    Xo,
-    Yo,
-    X_Obj_1,
-    Y_Obj_1,
-    AVz,
-]
+carsim_vs_solver.py
+carsim_io.py
+carsim_longitudinal_env.py
+example_longitudinal_pid.py
 ```
 
-这些变量可以理解为：
+它们的作用如下。
 
-| 名称 | 含义 | 对 ADAS 有什么用 |
-| --- | --- | --- |
-| `Vx` | 自车纵向速度 | 判断当前车速 |
-| `Vy` | 自车侧向速度 | 判断车辆是否稳定 |
-| `Yaw` | 自车横摆角 | 判断车辆姿态 |
-| `MuX_L1` | 路面附着条件 | 判断湿滑程度 |
-| `Xo` | 自车 X 坐标 | 计算相对距离 |
-| `Yo` | 自车 Y 坐标 | 判断横向位置 |
-| `X_Obj_1` | 前方目标 X 坐标 | 计算前方距离 |
-| `Y_Obj_1` | 前方目标 Y 坐标 | 判断是否同车道 |
-| `AVz` | 横摆角速度 | 判断车辆稳定性 |
+| 文件 | 作用 |
+| --- | --- |
+| `carsim_vs_solver.py` | 负责加载 CarSim Solver DLL，并封装 `read_configuration()`、`integrate_io()`、`terminate_run()` 等底层接口。 |
+| `carsim_io.py` | 负责把 CarSim 输出数组 `export_vars` 转成 Python 字典，并完成常见单位转换。 |
+| `carsim_longitudinal_env.py` | 把 CarSim 包装成只接收 `throttle/brake` 的环境。它会检查 CarSim import 数量必须为 2。 |
+| `example_longitudinal_pid.py` | 一个最小可运行 Demo：读取当前速度，用简单 PID 输出 `throttle/brake`，让车辆跟踪目标速度。 |
 
-原始输出通常需要做单位转换。例如速度可能是 `km/h`，而 Python 控制器中更常用 `m/s`。
+建议先不要加入复杂模型。先用 `example_longitudinal_pid.py` 确认 CarSim 和 Python 的数据交换是通的。
 
-一个常见转换函数如下：
+## 3. CarSim 侧需要创建什么 simfile
 
-```python
-import math
+你需要在本地 CarSim 中创建一个用于纵向控制的 run，并导出或生成对应的 `simfile.sim`。
 
-def parse_obs(raw):
-    ego_x = raw[4]
-    ego_y = raw[5]
-    obj_x = raw[6]
-    obj_y = raw[7]
+这个 run 必须满足两个要求。
 
-    return {
-        "vx": raw[0] / 3.6,
-        "vy": raw[1] / 3.6,
-        "yaw": math.radians(raw[2]),
-        "mu": raw[3],
-        "ego_x": ego_x,
-        "ego_y": ego_y,
-        "obj_x": obj_x,
-        "obj_y": obj_y,
-        "rel_x": obj_x - ego_x,
-        "rel_y": obj_y - ego_y,
-        "yaw_rate": math.radians(raw[8]),
-    }
-```
+### 要求 1：CarSim 只接收两个 import
 
-对 ACC 和 AEB 来说，最重要的通常是：
+Python Demo 只会向 CarSim 发送：
 
 ```text
-vx      当前自车速度
-rel_x   前方目标与自车的纵向距离
-rel_y   前方目标与自车的横向距离
-mu      路面附着条件
+[throttle, brake]
 ```
 
-## 6. 简单的速度控制例子
-
-PID 速度控制器的目标很简单：
-
-- 如果当前车速低于目标车速，就给油门；
-- 如果当前车速高于目标车速，就给制动；
-- 如果速度接近目标，就保持较小控制量。
-
-简化后的逻辑如下：
-
-```python
-target_speed = 30.0  # m/s
-current_speed = obs["vx"]
-
-error = target_speed - current_speed
-
-if error > 0:
-    throttle = min(error * 0.1, 1.0)
-    brake = 0.0
-else:
-    throttle = 0.0
-    brake = min(-error * 0.1, 1.0)
-
-import_vars = [throttle, brake, 0.0, 0.0]
-```
-
-这个例子虽然简单，但它已经包含了 CarSim-Python 交互的全部关键步骤：
-
-1. 从 CarSim 读取速度；
-2. Python 根据速度计算控制量；
-3. 把油门和刹车传回 CarSim；
-4. CarSim 更新车辆状态。
-
-## 7. 一个完整的交互循环长什么样
-
-下面是一个完整但仍然简化的流程。
-
-```python
-import ctypes
-from vs_solver import vs_solver
-
-sim_file = "baseline1/simfile.sim"
-
-solver = vs_solver()
-dll_path = solver.get_dll_path(sim_file)
-carsim_dll = ctypes.CDLL(dll_path)
-
-if not solver.get_api(carsim_dll):
-    raise RuntimeError("CarSim solver API 加载失败")
-
-config = solver.read_configuration(sim_file)
-
-t_current = config["t_start"]
-t_step = config["t_step"]
-n_export = config["n_export"]
-
-export_vars = solver.copy_export_vars(n_export)
-
-target_speed = 30.0
-
-for step in range(100):
-    obs = parse_obs(export_vars)
-
-    error = target_speed - obs["vx"]
-
-    if error > 0:
-        throttle = min(error * 0.1, 1.0)
-        brake = 0.0
-    else:
-        throttle = 0.0
-        brake = min(-error * 0.1, 1.0)
-
-    import_vars = [throttle, brake, 0.0, 0.0]
-
-    return_code, export_vars = solver.integrate_io(
-        t_current,
-        import_vars,
-        export_vars,
-    )
-
-    if return_code != 0:
-        break
-
-    t_current += t_step
-
-solver.terminate_run(t_current)
-```
-
-这段代码的作用是确认：
-
-- CarSim DLL 能被 Python 正常加载；
-- Python 能拿到 CarSim 输出；
-- Python 写入的油门和刹车能影响车辆运动；
-- 仿真可以正常开始和结束。
-- 
-
-## 8. MoE 在这里扮演什么角色
-
-当前目标不是让 MoE 直接学习底层车辆动力学，也不是让 MoE 直接输出复杂的所有控制量。
-
-更清晰的定位是：
-
-**MoE 是 ADAS 功能选择器。**
-
-也就是说，MoE 根据当前状态选择调用哪个功能：
+因此 CarSim 侧的 import 顺序必须是：
 
 ```text
-当前距离很远，速度正常       -> Cruise
-前方有车，需要保持距离       -> ACC
-前方距离过近，有碰撞风险     -> AEB
+IMPORT throttle
+IMPORT brake
 ```
 
-然后，被选中的 ADAS 功能再输出具体控制量：
+在 CarSim 展开的参数文件中，类似下面这样：
 
 ```text
-ACC -> throttle / brake
-AEB -> throttle / brake
+IMPORT IMP_THROTTLE_ENGINE Replace 0.0 ! 1
+IMPORT IMP_BK_STAT         Replace 0.0 ! 1
+PORTS_IMP 1,2
 ```
 
-数据流可以写成：
+不同 CarSim 配置中，制动变量名可能不是 `IMP_BK_STAT`，也可能是 `IMP_PCON_BK` 等。变量名可以不同，但顺序必须一致：
 
 ```text
-CarSim 状态
-    ↓
-MoE 选择 ADAS 功能
-    ↓
-ADAS 功能计算 throttle / brake
-    ↓
-CarSim 执行控制
+第 1 个 import = throttle
+第 2 个 import = brake
 ```
 
-## 9. MoE + ADAS 的闭环例子
+如果你的 `simfile.sim` 显示 `PORTS_IMP 1,4` 或 `PORTS_IMP 1,6`，这个最小 Demo 会报错，因为它只支持 2 个输入。
 
-下面是一个简化的伪代码。这里不讨论 MoE 怎么训练，只说明它在闭环里放在哪里。
+### 要求 2：CarSim 至少输出 Vx
 
-```python
-obs = env.reset()
+Demo 里的 PID 控制器需要读取当前车速，所以 CarSim 至少需要 export：
 
-for step in range(max_steps):
-    selected_adas = moe_selector.select(obs)
-
-    if selected_adas == "ACC":
-        cmd = acc.run(obs)
-    elif selected_adas == "AEB":
-        cmd = aeb.run(obs)
-    else:
-        cmd = cruise.run(obs)
-
-    obs, done, info = env.step(
-        throttle=cmd["throttle"],
-        brake=cmd["brake"],
-    )
-
-    if done:
-        break
-
-env.close()
+```text
+EXPORT Vx
 ```
 
-这个结构有几个好处：
+你也可以输出更多变量，例如：
 
-- MoE 只负责“选功能”，任务边界清晰；
-- ACC、AEB 等功能可以先用规则或传统控制器实现；
-- 后续可以替换 MoE，而不用改 CarSim 接口；
-- 记录 `selected_adas` 后，可以分析模型在什么场景下选择了什么功能。
+```text
+EXPORT Vx
+EXPORT Ax
+EXPORT Xo
+EXPORT DisS1_1
+EXPORT SpdS1_1
+EXPORT V_Obj_1
+PORTS_EXP 1,6
+```
 
-## 10. 建议记录哪些数据
+这些变量不是全部必需的。最小 Demo 真正需要的是 `Vx`。
 
-如果要训练或分析 MoE，建议每个控制周期记录一行数据：
+如果你只输出 `Vx`，运行命令里就写：
+
+```text
+--export-names Vx
+```
+
+如果你输出 6 个变量，就写：
+
+```text
+--export-names Vx,Ax,Xo,DisS1_1,SpdS1_1,V_Obj_1
+```
+
+**注意：`--export-names` 的顺序必须和 CarSim 中 EXPORT 的顺序完全一致。**
+
+## 4. simfile.sim 中应看到的关键信息
+
+你的 `simfile.sim` 应该类似：
+
+```text
+PRODUCT_ID CarSim
+PRODUCT_VER 2019.0
+DLLFILE D:\CarSim2019.0\CarSim2019.0_Prog\Programs\solvers\carsim_64.dll
+PORTS_IMP 1,2
+PORTS_EXP 1,N
+```
+
+其中：
+
+- `PRODUCT_VER 2019.0` 表示使用 CarSim 2019.0；
+- `DLLFILE` 是 Python 要加载的求解器 DLL；
+- `PORTS_IMP 1,2` 表示 Python 只输入两个量；
+- `PORTS_EXP 1,N` 表示 CarSim 输出 N 个量。
+
+`PORTS_EXP` 的数量由你自己决定，只要运行 Demo 时提供相同数量的 `--export-names` 即可。
+
+## 5. Python 文件怎么运行
+
+假设你已经把这 4 个 `.py` 文件放在同一个目录下，例如：
+
+```text
+C:\Users\Administrator
+```
+
+并且你已经创建好了：
+
+```text
+D:\CarSim2019.0\CarSim2019.0_Data\Extensions\CarSimPython\MyLongitudinalDemo\simfile.sim
+```
+
+### 第一步：确认 Python 能看到脚本
+
+在 PowerShell 中进入脚本目录：
+
+```powershell
+cd C:\Users\Administrator
+```
+
+查看帮助：
+
+```powershell
+python .\example_longitudinal_pid.py --help
+```
+
+如果能看到参数说明，说明 Python 脚本本身可以运行。
+
+### 第二步：运行只输出 Vx 的最小 Demo
+
+如果你的 CarSim run 只配置了：
+
+```text
+EXPORT Vx
+PORTS_EXP 1,1
+```
+
+运行：
+
+```powershell
+python .\example_longitudinal_pid.py `
+  --sim-file "D:\CarSim2019.0\CarSim2019.0_Data\Extensions\CarSimPython\MyLongitudinalDemo\simfile.sim" `
+  --export-names Vx `
+  --target-speed 25 `
+  --duration 10 `
+  --log-csv ".\longitudinal_pid_log.csv"
+```
+
+含义：
+
+- `--sim-file`：你的 CarSim simfile 路径；
+- `--export-names Vx`：告诉 Python，CarSim 只输出了一个变量，名字是 `Vx`；
+- `--target-speed 25`：目标速度为 `25 m/s`；
+- `--duration 10`：运行 10 秒；
+- `--log-csv`：保存日志。
+
+### 第三步：运行多输出变量 Demo
+
+如果你的 CarSim run 配置了：
+
+```text
+EXPORT Vx
+EXPORT Ax
+EXPORT Xo
+EXPORT DisS1_1
+EXPORT SpdS1_1
+EXPORT V_Obj_1
+PORTS_EXP 1,6
+```
+
+运行：
+
+```powershell
+python .\example_longitudinal_pid.py `
+  --sim-file "D:\CarSim2019.0\CarSim2019.0_Data\Extensions\CarSimPython\MyLongitudinalDemo\simfile.sim" `
+  --export-names Vx,Ax,Xo,DisS1_1,SpdS1_1,V_Obj_1 `
+  --target-speed 25 `
+  --duration 10 `
+  --log-csv ".\longitudinal_pid_log.csv"
+```
+
+运行结束后，会生成：
+
+```text
+longitudinal_pid_log.csv
+```
+
+里面记录每个控制周期的：
 
 ```text
 time
 vx
-mu
-ego_x
-ego_y
-obj_x
-obj_y
-rel_x
-rel_y
-yaw_rate
-selected_adas
+target_speed
+speed_error
 throttle
 brake
+rel_x
+return_code
 ```
 
-这些数据可以回答很多问题：
+## 6. Demo 内部发生了什么
 
-- 当前车速是多少；
-- 前方目标距离是多少；
-- MoE 选择了 ACC 还是 AEB；
-- 选择 AEB 时是否真的存在危险；
-- 油门和制动是否平滑；
-- 不同路面附着条件下选择是否合理。
+`example_longitudinal_pid.py` 做了下面几件事。
 
-如果后续需要更复杂分析，还可以额外记录：
+### 1. 加载 CarSim DLL
+
+```python
+env = CarSimLongitudinalEnv(sim_file=args.sim_file, ...)
+```
+
+环境内部会读取 `simfile.sim`，找到 `DLLFILE`，然后加载 `carsim_64.dll`。
+
+### 2. 初始化 CarSim run
+
+```python
+obs = env.reset()
+```
+
+这一步会调用 CarSim 的 `read_configuration()`，读取：
 
 ```text
-relative_speed
-ttc
-safe_distance
-adas_confidence
-expert_scores
+n_import
+n_export
+t_start
+t_stop
+t_step
 ```
 
-## 11. 仿真的开始和结束
+如果 `n_import` 不是 2，程序会报错并停止。
 
-CarSim 的每一轮仿真都要有明确的开始和结束。
-
-开始时调用：
+### 3. 读取当前车速
 
 ```python
-config = solver.read_configuration(sim_file)
+obs["vx"]
 ```
 
-这一步会读取 CarSim 的配置并初始化仿真。
+`carsim_io.py` 会把 CarSim 的 `Vx` 从 `km/h` 转成 `m/s`。
 
-结束时必须调用：
+### 4. PID 计算 throttle / brake
 
 ```python
-solver.terminate_run(t_current)
+throttle, brake = controller.step(target_speed, obs["vx"])
 ```
 
-不要省略结束步骤。CarSim Solver DLL 会在进程中保存当前 run 的状态。如果上一轮仿真没有正常结束，下一轮可能初始化失败。
+如果当前速度低于目标速度，输出油门；如果当前速度高于目标速度，输出制动。
+
+### 5. 把 throttle / brake 传给 CarSim
+
+```python
+obs, done, info = env.step(throttle, brake)
+```
+
+环境内部会构造：
+
+```python
+import_vars = [throttle, brake]
+```
+
+然后调用：
+
+```python
+solver.integrate_io(t_current, import_vars, export_vars)
+```
+
+### 6. 结束仿真
+
+运行结束后调用：
+
+```python
+env.close()
+```
+
+它会调用 CarSim 的：
+
+```python
+terminate_run(t_current)
+```
+
+这一步不能省略。否则下一次初始化 CarSim run 时可能出现状态冲突。
+
+## 7. 如果运行失败，先检查这些点
+
+### 1. n_import 不是 2
+
+错误类似：
+
+```text
+This demo expects exactly 2 CarSim imports: [throttle, brake].
+```
+
+说明你的 CarSim run 不是只输入 throttle 和 brake。请在 CarSim 中调整 import 配置，确保：
+
+```text
+PORTS_IMP 1,2
+```
+
+### 2. export 数量和 --export-names 数量不一致
+
+例如 CarSim 输出 6 个变量，但你只写了：
+
+```text
+--export-names Vx
+```
+
+程序会报错。解决方法是让 `--export-names` 和 CarSim 的 `EXPORT` 顺序完全一致。
+
+### 3. Vx 没有输出
+
+如果没有 `EXPORT Vx`，PID 控制器无法知道当前速度。请至少添加：
+
+```text
+EXPORT Vx
+```
+
+### 4. DLL 路径不对
+
+确认 `simfile.sim` 中存在：
+
+```text
+DLLFILE D:\CarSim2019.0\CarSim2019.0_Prog\Programs\solvers\carsim_64.dll
+```
+
+并且该文件真实存在。
+
+### 5. 上一次 run 没有正常结束
+
+如果 Python 中断或异常退出，CarSim Solver 可能残留状态。重新运行前可以重启 Python 进程；代码中正常结束时会自动调用 `terminate_run()`。
+
+## 8. 各文件简要说明
+
+### `carsim_vs_solver.py`
+
+这是最底层封装。它不关心控制逻辑，只负责和 CarSim DLL 通信。
+
+主要函数：
+
+```python
+load(sim_file)
+read_configuration(sim_file)
+copy_export_vars(n_export)
+integrate_io(t_current, import_vars, export_vars)
+terminate_run(t_current)
+```
+
+### `carsim_io.py`
+
+负责把 CarSim 输出数组转成更容易读的字典。
+
+例如：
+
+```python
+obs = parse_observation(export_vars, export_names)
+```
+
+输出：
+
+```python
+{
+    "vx": 24.8,
+    "ego_x": 120.5,
+    "rel_x": 35.0,
+    ...
+}
+```
+
+### `carsim_longitudinal_env.py`
+
+这是最适合后续扩展的文件。它把 CarSim 包装成：
+
+```python
+obs = env.reset()
+obs, done, info = env.step(throttle, brake)
+env.close()
+```
+
+它强制要求 CarSim 只有两个 import，因此可以避免控制通道顺序混乱。
+
+### `example_longitudinal_pid.py`
+
+这是最小 Demo。它用 PID 计算油门和制动，让车辆跟踪目标速度。
+
+你应该先跑通这个文件，再考虑加入更复杂的控制器或学习模型。
+
+## 9. 后续可以怎么扩展
+
+跑通最小 Demo 后，可以逐步扩展：
+
+1. 增加更多 export，例如前车距离、前车速度、加速度；
+2. 把 PID 换成你自己的控制策略；
+3. 把 `target_speed` 改成随场景变化；
+4. 增加日志字段；
+5. 批量运行多个 `simfile.sim`；
+6. 再接入更复杂的模型。
+
+但在扩展前，请保持一个原则：
+
+```text
+CarSim import 顺序必须和 Python import_vars 顺序一致。
+```
+
+本文最小 Demo 的顺序固定为：
+
+```text
+[throttle, brake]
+```
+
+## 10. 核心结论
+
+- 最小 CarSim-Python 纵向控制只需要两个输入：`throttle` 和 `brake`。
+- CarSim 侧必须配置 `PORTS_IMP 1,2`。
+- CarSim 至少需要输出 `Vx`，这样 Python 才能做速度控制。
+- `--export-names` 必须和 CarSim 的 `EXPORT` 顺序完全一致。
+- `example_longitudinal_pid.py` 是第一个应该运行的 Demo。
+- 每次仿真结束都必须调用 `terminate_run()`，代码中的 `env.close()` 已经处理这件事。
