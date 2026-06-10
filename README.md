@@ -4,8 +4,6 @@
 
 **让 Python 在 CarSim 仿真过程中读取车速，并只把两个控制量传回 CarSim：`throttle` 和 `brake`。**
 
-本文不讨论 MoE、ADAS、强化学习或复杂模型，只把最小交互规则讲清楚。
-
 ## 1. 最小交互逻辑
 
 CarSim 和 Python 的交互可以理解成一个循环：
