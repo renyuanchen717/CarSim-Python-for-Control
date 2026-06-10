@@ -30,18 +30,16 @@ CarSim 返回新的状态
 
 ## 2. 本文使用的简化场景
 
-为了让流程更容易理解，本文只讨论纵向控制，也就是车辆沿道路前后方向的控制。
+为了让流程更容易理解，本文只讨论纵向控制 (不涉及左右转向)。
 
-Python 只需要输出两个量：
+Python 输出两个量：
 
 ```text
 throttle  油门
 brake     制动
 ```
 
-暂时不考虑转向控制。即使 CarSim 的接口中还包含转向输入，我们也先把转向固定为 0，让车辆直行。
-
-所以本文的重点不是“如何让车换道”，而是：
+本文的重点是：
 
 - 如何读取车速；
 - 如何读取前方目标车或障碍物位置；
@@ -86,9 +84,7 @@ return_code, export_vars = solver.integrate_io(
 ```text
 import_vars = [
     throttle,
-    brake,
-    steer_L1,
-    steer_R1,
+    brake
 ]
 ```
 
@@ -98,8 +94,6 @@ import_vars = [
 | --- | --- | --- |
 | `throttle` | 油门开度 | Python 输出 |
 | `brake` | 制动输入 | Python 输出 |
-| `steer_L1` | 左前轮转向 | 固定为 0 |
-| `steer_R1` | 右前轮转向 | 固定为 0 |
 
 因此，对本文的纵向控制任务来说，真正需要模型或控制器决定的只有：
 
@@ -107,16 +101,6 @@ import_vars = [
 throttle = 0.2
 brake = 0.0
 ```
-
-送入 CarSim 时再补齐为：
-
-```python
-import_vars = [throttle, brake, 0.0, 0.0]
-```
-
-这一步非常重要。它说明了一个原则：
-
-**模型不一定要直接输出 CarSim 需要的全部输入，环境封装层可以帮模型补齐固定项。**
 
 ## 5. CarSim 返回给 Python 的状态
 
@@ -187,11 +171,9 @@ rel_y   前方目标与自车的横向距离
 mu      路面附着条件
 ```
 
-## 6. 最简单的纵向控制例子
+## 6. 简单的速度控制例子
 
-在还没有 MoE 模型之前，可以先用一个简单的纵向 PID 控制器验证接口是否通畅。
-
-PID 控制器的目标很简单：
+PID 速度控制器的目标很简单：
 
 - 如果当前车速低于目标车速，就给油门；
 - 如果当前车速高于目标车速，就给制动；
@@ -277,43 +259,15 @@ for step in range(100):
 solver.terminate_run(t_current)
 ```
 
-这段代码可以先不用 MoE。它的作用是确认：
+这段代码的作用是确认：
 
 - CarSim DLL 能被 Python 正常加载；
 - Python 能拿到 CarSim 输出；
 - Python 写入的油门和刹车能影响车辆运动；
 - 仿真可以正常开始和结束。
+- 
 
-## 8. 为什么要封装成环境
-
-如果后面要训练模型，最好不要在训练代码里到处直接调用 CarSim DLL。更好的做法是把 CarSim 包装成一个环境。
-
-这个环境只暴露三个动作：
-
-```python
-obs = env.reset()
-obs, done, info = env.step(throttle, brake)
-env.close()
-```
-
-对模型来说，它不需要知道 CarSim DLL 怎么加载，也不需要知道 `import_vars` 里还有两个转向输入。
-
-模型只需要关心：
-
-```text
-输入：当前车辆和环境状态
-输出：throttle / brake
-```
-
-环境内部负责把它变成：
-
-```python
-import_vars = [throttle, brake, 0.0, 0.0]
-```
-
-这种封装可以让后续代码更清晰，也方便替换控制器或模型。
-
-## 9. MoE 在这里扮演什么角色
+## 8. MoE 在这里扮演什么角色
 
 当前目标不是让 MoE 直接学习底层车辆动力学，也不是让 MoE 直接输出复杂的所有控制量。
 
@@ -327,7 +281,6 @@ import_vars = [throttle, brake, 0.0, 0.0]
 当前距离很远，速度正常       -> Cruise
 前方有车，需要保持距离       -> ACC
 前方距离过近，有碰撞风险     -> AEB
-状态异常或不确定             -> Safe Stop
 ```
 
 然后，被选中的 ADAS 功能再输出具体控制量：
@@ -349,7 +302,7 @@ ADAS 功能计算 throttle / brake
 CarSim 执行控制
 ```
 
-## 10. MoE + ADAS 的闭环例子
+## 9. MoE + ADAS 的闭环例子
 
 下面是一个简化的伪代码。这里不讨论 MoE 怎么训练，只说明它在闭环里放在哪里。
 
@@ -384,7 +337,7 @@ env.close()
 - 后续可以替换 MoE，而不用改 CarSim 接口；
 - 记录 `selected_adas` 后，可以分析模型在什么场景下选择了什么功能。
 
-## 11. 建议记录哪些数据
+## 10. 建议记录哪些数据
 
 如果要训练或分析 MoE，建议每个控制周期记录一行数据：
 
@@ -423,7 +376,7 @@ adas_confidence
 expert_scores
 ```
 
-## 12. 仿真的开始和结束
+## 11. 仿真的开始和结束
 
 CarSim 的每一轮仿真都要有明确的开始和结束。
 
@@ -442,73 +395,3 @@ solver.terminate_run(t_current)
 ```
 
 不要省略结束步骤。CarSim Solver DLL 会在进程中保存当前 run 的状态。如果上一轮仿真没有正常结束，下一轮可能初始化失败。
-
-如果你把 CarSim 包装成环境，建议在 `reset()` 时检查上一轮是否结束；如果没有结束，先调用 `close()`。
-
-## 13. Python 能不能修改 CarSim 场景
-
-这一点很容易误解。
-
-Python 在仿真过程中能实时修改的，是 CarSim 已经声明为 `import_vars` 的输入。
-
-在本文的纵向控制例子里，Python 可以实时修改：
-
-```text
-throttle
-brake
-steer_L1
-steer_R1
-```
-
-但我们只使用前两个：
-
-```text
-throttle
-brake
-```
-
-Python 不能通过普通 `import_vars` 直接实时修改：
-
-- 道路线形；
-- 车道宽度；
-- 障碍物长宽高；
-- Moving Object 的三维形状；
-- CarSim 车辆参数；
-- 已经初始化完成的道路结构。
-
-这些通常是 CarSim run 初始化时读入的配置。
-
-如果你想做多场景实验，更稳妥的方式是准备多个 CarSim run 或多个 `simfile.sim`：
-
-```text
-场景 1：正常路面 + 远距离前车
-场景 2：低附着路面 + 近距离前车
-场景 3：高速接近静止障碍物
-```
-
-然后每一轮 episode 选择一个场景，初始化对应 run，仿真结束后再切换下一个场景。
-
-## 14. 推荐上手顺序
-
-建议按这个顺序推进：
-
-1. 先跑通 CarSim + Python 最小循环；
-2. 打印 `export_vars`，确认 Python 能读取 CarSim 状态；
-3. 用固定 `throttle` 和 `brake` 测试车辆是否响应；
-4. 加入简单纵向 PID，验证速度控制；
-5. 封装成 `reset()`、`step()`、`close()` 环境；
-6. 实现 Cruise、ACC、AEB 等功能接口；
-7. 加入 MoE，让它选择调用哪个 ADAS 功能；
-8. 记录每一步状态、功能选择和控制量；
-9. 做多场景评估。
-
-## 15. 核心结论
-
-- CarSim 与 Python 的交互本质是两个数组：`export_vars` 和 `import_vars`。
-- CarSim 把车辆和环境状态放进 `export_vars`，Python 读取后做决策。
-- Python 把油门和制动放进 `import_vars`，CarSim 读取后推进仿真。
-- 对入门纵向控制来说，模型只输出 `throttle` 和 `brake` 就够了。
-- 如果 CarSim 还要求转向输入，可以在环境封装层补 `0.0`。
-- MoE 更适合作为 ADAS 功能选择器：它选择 ACC、AEB 等功能，而不是一开始直接控制所有底层变量。
-- 修改道路、障碍物尺寸等 CarSim 场景信息，通常需要切换或重新生成 CarSim run，而不是在仿真过程中直接改 `import_vars`。
-
